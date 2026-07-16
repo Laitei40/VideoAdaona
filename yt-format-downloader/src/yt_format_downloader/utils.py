@@ -57,6 +57,10 @@ MAX_HISTORY_ENTRIES = 200
 # merged with whatever the user already has saved so new keys introduced in
 # later versions of the app are picked up automatically.
 DEFAULT_CONFIG: Dict[str, Any] = {
+    # One of "current_directory" (default, like the yt-dlp CLI itself),
+    # "fixed_directory" (always use "download_folder" below), or
+    # "ask_every_time".
+    "download_location_mode": "current_directory",
     "download_folder": str(Path.home() / "Downloads"),
     "filename_template": "%(title)s.%(ext)s",
     "embed_thumbnail": True,
@@ -232,6 +236,22 @@ def format_elapsed(seconds: float) -> str:
 def check_ffmpeg_installed() -> bool:
     """Return True if an ``ffmpeg`` executable is reachable on PATH."""
     return shutil.which("ffmpeg") is not None
+
+
+def check_writable(directory: Path) -> bool:
+    """Return True if we can actually write files into ``directory``.
+
+    Does a real write-and-remove rather than trusting ``os.access``, which
+    can report misleading results (especially on Windows).
+    """
+    probe = directory / f".ytfmt_write_test_{os.getpid()}"
+    try:
+        with probe.open("w"):
+            pass
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
 
 
 def check_internet_connection(timeout: float = 2.5) -> bool:

@@ -179,16 +179,6 @@ class Downloader:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def build_format_spec(format_info: FormatInfo) -> str:
-        """Build a yt-dlp ``-f`` format string for a chosen format row."""
-        if format_info.has_both:
-            return f"{format_info.format_id}/best"
-        if format_info.is_video_only:
-            return f"{format_info.format_id}+bestaudio/best"
-        # audio only
-        return f"{format_info.format_id}/bestaudio/best"
-
-    @staticmethod
     def estimate_size(*formats: FormatInfo) -> Optional[int]:
         """Sum known filesizes across one or more formats (e.g. video+audio)."""
         total = 0
@@ -303,6 +293,26 @@ class Downloader:
             return DownloadResult(success=False, error_message=message, url=url)
 
         elapsed = time.monotonic() - start
+
+        if info is None:
+            # yt-dlp returns None here (rather than raising) when the item
+            # was skipped because it's already recorded in the download
+            # archive - not a failure, just nothing new to report.
+            append_log(f"SKIPPED {url}: already in the download archive")
+            return DownloadResult(
+                success=True,
+                title="(already downloaded previously)",
+                resolution="unknown",
+                filesize_display="Unknown",
+                filepath=None,
+                elapsed_seconds=elapsed,
+                error_message=(
+                    "Skipped: this was already downloaded before and found in "
+                    "the download archive. Turn off 'use_download_archive' in "
+                    "Settings to force a re-download."
+                ),
+                url=url,
+            )
 
         # Playlists return a dict with 'entries'; use the first entry actually
         # downloaded for the headline summary, but report success overall.

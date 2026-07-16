@@ -100,20 +100,75 @@ System Check
 7. Exit
 ```
 
-1. **Download Video** - paste a URL, browse its formats, pick one by number,
-   choose a download folder (blank = your `Downloads` folder), confirm the
-   estimated size, and watch it download.
+1. **Download Video** - paste a URL, browse its formats, and pick one by
+   number. By default the file saves into whatever folder you ran `ytfmt`
+   from (see [Where files are saved](#where-files-are-saved) below) - you
+   confirm the estimated size and watch it download. What happens next
+   depends on the format you picked:
+   - Already has both video and audio (e.g. `18`, `22`) - downloaded exactly
+     as-is, no further questions.
+   - Audio-only - downloaded exactly as-is, no further questions.
+   - Video-only - you're shown the format's details and a menu:
+
+     ```text
+     1. Download video only (no audio)
+     2. Download video + automatically select the best audio (Recommended)
+     3. Manually choose an audio format
+     4. Cancel
+     ```
+
+     Option 2 picks the best-matching audio for the video's container
+     (MP4 -> M4A/AAC, WebM -> WebM/Opus) so playback stays broadly
+     compatible; option 3 shows every audio track and lets you pair any of
+     them with the video, even across codecs, if you know what you're doing.
 2. **Download Best Quality** - paste one or more comma-separated URLs and
    they'll download in parallel using `bestvideo+bestaudio`.
 3. **Download Audio Only** - same as option 1, but only audio formats are
-   shown.
+   shown, and the pick is always downloaded exactly as-is.
 4. **List Formats** - just prints the format table, no download.
-5. **Settings** - edit `config.json` interactively (download folder,
+5. **Settings** - edit `config.json` interactively (download location mode,
    filename template, thumbnail/metadata embedding, subtitles, cookies file,
    parallel download limit, and more).
 6. **Download History** - browse or search past downloads.
 
 Playlists are detected automatically; you'll be asked which items to grab.
+
+## Where files are saved
+
+Just like the plain `yt-dlp` CLI, **by default nothing is asked** - files
+save into the directory you launched `ytfmt` from:
+
+```cmd
+D:\Movies> ytfmt
+```
+
+saves into `D:\Movies\`. This is controlled by `download_location_mode` in
+`config.json`, which supports three values (editable via **Settings ->
+Download Location**):
+
+- `current_directory` (default) - always save into the current working
+  directory, no prompt.
+- `fixed_directory` - always save into a folder you set once in Settings,
+  no prompt.
+- `ask_every_time` - before each download, shows:
+
+  ```text
+  Save Location
+
+  Current Directory
+  C:\Users\Laitei\Videos
+
+  1. Save here (Recommended)
+  2. Choose another folder
+  ```
+
+  Choosing a folder that doesn't exist offers to create it
+  (`Folder does not exist. Create it? 1. Yes / 2. No`); write permission is
+  checked before every download either way.
+
+Whichever mode is active, the resolved location is always printed
+(`Download Location` panel) before downloading, and the final save path
+appears again in the completion summary.
 
 ## Project structure
 

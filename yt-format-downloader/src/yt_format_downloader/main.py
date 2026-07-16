@@ -16,7 +16,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -33,7 +33,7 @@ from .downloader import (
     get_ytdlp_version,
     is_update_available,
 )
-from .formatter import FormatInfo, FormatTableBuilder
+from .formatter import FormatInfo, FormatTableBuilder, friendly_codec_label, select_compatible_audio
 from .progress import ProgressManager
 from .utils import (
     add_history_entry,
@@ -41,6 +41,7 @@ from .utils import (
     auto_update_ytdlp,
     check_ffmpeg_installed,
     check_internet_connection,
+    check_writable,
     format_bytes,
     format_elapsed,
     load_config,
@@ -220,18 +221,26 @@ class App:
         if chosen is None:
             return
 
-        output_dir = self._prompt_output_folder()
-        estimate = self._estimate_for_selection(formats, chosen)
+        selection = self._resolve_format_selection(formats, chosen)
+        if selection is None:
+            self.console.print("Cancelled.")
+            return
+        format_spec, audio = selection
+
+        output_dir = self._resolve_download_directory()
+        if output_dir is None:
+            self.console.print("Cancelled.")
+            return
+        estimate = self._estimate_for_pair(chosen, audio)
         self.console.print(f"Estimated download size: [bold]{format_bytes(estimate)}[/bold]")
         if not Confirm.ask("Proceed with download?", default=True):
             self.console.print("Cancelled.")
             return
 
-        format_spec = Downloader.build_format_spec(chosen)
         label = sanitize_filename(str(representative.get("title", url)))[:40]
         result = self._run_download(url, format_spec, output_dir, label, playlist_items)
         self._print_summary(result)
-        self._record_history(result, chosen)
+        self._record_history(result, format_spec)
 
     # ------------------------------------------------------------------
     # Menu option 2: Download Best Quality
@@ -248,7 +257,10 @@ class App:
             self.console.print("[red]No URL provided.[/red]")
             return
 
-        output_dir = self._prompt_output_folder()
+        output_dir = self._resolve_download_directory()
+        if output_dir is None:
+            self.console.print("Cancelled.")
+            return
 
         jobs: List[Job] = []
         for url in urls:
@@ -274,7 +286,7 @@ class App:
         results = self._run_jobs(jobs, output_dir)
         for result in results:
             self._print_summary(result)
-            self._record_history(result)
+            self._record_history(result, "bestvideo+bestaudio/best")
 
     # ------------------------------------------------------------------
     # Menu option 3: Download Audio Only
@@ -303,17 +315,21 @@ class App:
         if chosen is None:
             return
 
-        output_dir = self._prompt_output_folder()
+        output_dir = self._resolve_download_directory()
+        if output_dir is None:
+            self.console.print("Cancelled.")
+            return
         self.console.print(f"Estimated download size: [bold]{format_bytes(chosen.filesize)}[/bold]")
         if not Confirm.ask("Proceed with download?", default=True):
             self.console.print("Cancelled.")
             return
 
-        format_spec = Downloader.build_format_spec(chosen)
+        # Audio-only formats are downloaded exactly as chosen - no questions.
+        format_spec = chosen.format_id
         label = sanitize_filename(str(representative.get("title", url)))[:40]
         result = self._run_download(url, format_spec, output_dir, label, playlist_items)
         self._print_summary(result)
-        self._record_history(result, chosen)
+        self._record_history(result, format_spec)
 
     # ------------------------------------------------------------------
     # Menu option 4: List Formats
@@ -381,6 +397,9 @@ class App:
         self.downloader.config = self.config
 
     def _edit_setting(self, key: str) -> None:
+        if key == "download_location_mode":
+            self._edit_download_location_mode()
+            return
         current = self.config[key]
         if isinstance(current, bool):
             self.config[key] = Confirm.ask(f"Enable '{key}'?", default=current)
@@ -395,6 +414,26 @@ class App:
             self.config[key] = Prompt.ask(f"New value for '{key}'", default=str(current))
         save_config(self.config)
         self.console.print(f"[green]Updated '{key}'.[/green]")
+
+    def _edit_download_location_mode(self) -> None:
+        self.console.print(
+            "Download Location\n\n"
+            "1. Current Working Directory (Recommended)\n"
+            "2. Fixed Folder\n"
+            "3. Ask Every Time"
+        )
+        choice = Prompt.ask("Option", choices=["1", "2", "3"], default="1")
+        if choice == "1":
+            self.config["download_location_mode"] = "current_directory"
+        elif choice == "2":
+            default_folder = self.config.get("download_folder") or str(Path.home() / "Downloads")
+            raw = Prompt.ask("Enter download folder", default=default_folder).strip()
+            self.config["download_folder"] = str(Path(raw or default_folder).expanduser())
+            self.config["download_location_mode"] = "fixed_directory"
+        else:
+            self.config["download_location_mode"] = "ask_every_time"
+        save_config(self.config)
+        self.console.print(f"[green]Download location set to '{self.config['download_location_mode']}'.[/green]")
 
     # ------------------------------------------------------------------
     # Menu option 6: Download History
@@ -452,9 +491,11 @@ class App:
             return None
         return url
 
-    def _prompt_format_choice(self, formats: List[FormatInfo]) -> Optional[FormatInfo]:
+    def _prompt_format_choice(
+        self, formats: List[FormatInfo], prompt_text: str = "Choose format number"
+    ) -> Optional[FormatInfo]:
         while True:
-            raw = Prompt.ask("Choose format number")
+            raw = Prompt.ask(prompt_text)
             if raw.strip().lower() in ("q", "quit", "cancel", ""):
                 return None
             try:
@@ -468,11 +509,148 @@ class App:
                 continue
             return match
 
-    def _prompt_output_folder(self) -> Path:
-        default_folder = self.config.get("download_folder", "Downloads")
-        raw = Prompt.ask("Download folder", default=default_folder)
-        folder = raw.strip() or default_folder
-        return Path(folder).expanduser()
+    def _resolve_format_selection(
+        self, formats: List[FormatInfo], chosen: FormatInfo
+    ) -> Optional[Tuple[str, Optional[FormatInfo]]]:
+        """Decide the final yt-dlp format string for a user-picked format row.
+
+        Formats that already contain both video and audio, or that are
+        audio-only, are downloaded exactly as chosen - no extra questions.
+        A video-only format triggers a sub-menu asking how to handle audio.
+
+        Returns ``(format_spec, audio_or_none)``, or ``None`` if the user
+        cancelled out of the video-only sub-menu.
+        """
+        if chosen.has_both or chosen.is_audio_only:
+            return chosen.format_id, None
+
+        # Video-only: the user gets to decide how audio is handled.
+        self._print_selected_format(chosen)
+        while True:
+            self.console.print(
+                "\nWhat would you like to do?\n"
+                "1. Download video only (no audio)\n"
+                "2. Download video + automatically select the best audio (Recommended)\n"
+                "3. Manually choose an audio format\n"
+                "4. Cancel"
+            )
+            option = Prompt.ask("Option", choices=["1", "2", "3", "4"], default="2")
+
+            if option == "1":
+                return chosen.format_id, None
+
+            if option == "2":
+                audio = select_compatible_audio(formats, chosen)
+                if audio is None:
+                    self.console.print("[yellow]No audio formats are available for this video.[/yellow]")
+                    continue
+                self._print_selected_audio(audio)
+                format_spec = f"{chosen.format_id}+{audio.format_id}"
+                self.console.print(f"[bold]Final format:[/bold] {format_spec}")
+                return format_spec, audio
+
+            if option == "3":
+                audio_formats = FormatTableBuilder.filter_audio_only(formats)
+                if not audio_formats:
+                    self.console.print("[yellow]No audio formats are available for this video.[/yellow]")
+                    continue
+                self.console.print(FormatTableBuilder.render_audio_choice_table(audio_formats))
+                audio = self._prompt_format_choice(audio_formats, prompt_text="Select audio format")
+                if audio is None:
+                    continue
+                format_spec = f"{chosen.format_id}+{audio.format_id}"
+                self.console.print(f"[bold]Final format:[/bold] {format_spec}")
+                return format_spec, audio
+
+            # option == "4"
+            return None
+
+    def _print_selected_format(self, video: FormatInfo) -> None:
+        width = video.raw.get("width")
+        height = video.raw.get("height")
+        fps = video.raw.get("fps")
+
+        lines = [video.format_id]
+        if width and height:
+            lines.append(f"{width}×{height}")
+        if height:
+            lines.append(f"{height}p{fps:g}" if fps else f"{height}p")
+        lines.append(video.ext.upper())
+        lines.append(video.notes.title())
+
+        self.console.print(Panel("\n".join(lines), title="Selected Format", border_style="cyan"))
+
+    def _print_selected_audio(self, audio: FormatInfo) -> None:
+        lines = [audio.format_id, friendly_codec_label(audio.acodec), audio.tbr_display]
+        self.console.print(
+            Panel("\n".join(lines), title="Automatically selected audio", border_style="cyan")
+        )
+
+    def _resolve_download_directory(self) -> Optional[Path]:
+        """Decide where a download should be saved, per ``download_location_mode``.
+
+        Mirrors the plain yt-dlp CLI's default: save into the current
+        working directory without asking, unless the user has configured a
+        fixed folder or opted into being asked each time. Always prints the
+        resolved location before returning it.
+        """
+        mode = self.config.get("download_location_mode", "current_directory")
+
+        if mode == "fixed_directory":
+            fixed = self.config.get("download_folder") or str(Path.home() / "Downloads")
+            directory = self._ensure_directory(Path(fixed).expanduser())
+        elif mode == "ask_every_time":
+            directory = self._prompt_save_location_menu()
+        else:
+            directory = self._ensure_directory(Path.cwd())
+
+        if directory is None:
+            return None
+
+        self.console.print(Panel(str(directory), title="Download Location", border_style="cyan"))
+        return directory
+
+    def _prompt_save_location_menu(self) -> Optional[Path]:
+        cwd = Path.cwd()
+        self.console.print(
+            Panel(f"[bold]Current Directory[/bold]\n{cwd}", title="Save Location", border_style="cyan")
+        )
+        self.console.print("1. Save here (Recommended)\n2. Choose another folder")
+        choice = Prompt.ask("Option", choices=["1", "2"], default="1")
+        if choice == "1":
+            return self._ensure_directory(cwd)
+
+        raw = Prompt.ask("Enter destination folder").strip()
+        folder = Path(raw).expanduser() if raw else cwd
+        return self._ensure_directory(folder)
+
+    def _ensure_directory(self, path: Path) -> Optional[Path]:
+        """Make sure ``path`` exists (asking before creating) and is writable.
+
+        Returns ``None`` if the user declines to create a missing folder, or
+        if the folder isn't usable (not a directory, no write permission).
+        """
+        if not path.exists():
+            self.console.print(f"[yellow]Folder does not exist:[/yellow] {path}")
+            self.console.print("Create it?\n\n1. Yes\n2. No")
+            choice = Prompt.ask("Option", choices=["1", "2"], default="1")
+            if choice != "1":
+                return None
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                self.console.print(f"[red]Could not create folder:[/red] {exc}")
+                return None
+
+        if not path.is_dir():
+            self.console.print(f"[red]Not a folder:[/red] {path}")
+            return None
+
+        if not check_writable(path):
+            self.console.print(f"[red]No write permission for:[/red] {path}")
+            return None
+
+        return path
 
     def _safe_extract(self, url: str) -> Optional[Dict[str, Any]]:
         if not check_internet_connection():
@@ -528,13 +706,10 @@ class App:
         return entries[first_index - 1]
 
     @staticmethod
-    def _estimate_for_selection(formats: List[FormatInfo], chosen: FormatInfo) -> Optional[int]:
-        if chosen.is_video_only:
-            audio_candidates = [f for f in formats if f.is_audio_only]
-            best_audio = max(audio_candidates, key=lambda f: f.filesize or 0, default=None)
-            if best_audio is not None:
-                return Downloader.estimate_size(chosen, best_audio)
-        return chosen.filesize
+    def _estimate_for_pair(video: FormatInfo, audio: Optional[FormatInfo]) -> Optional[int]:
+        if audio is not None:
+            return Downloader.estimate_size(video, audio)
+        return video.filesize
 
     # ------------------------------------------------------------------
     # Download execution
@@ -625,7 +800,7 @@ class App:
             self.console.print(f"[yellow]Note:[/yellow] {result.error_message}")
 
     @staticmethod
-    def _record_history(result: DownloadResult, chosen: Optional[FormatInfo] = None) -> None:
+    def _record_history(result: DownloadResult, format_spec: Optional[str] = None) -> None:
         add_history_entry(
             {
                 "url": result.url,
@@ -635,7 +810,7 @@ class App:
                 "location": str(result.filepath) if result.filepath else "",
                 "success": result.success,
                 "error": result.error_message,
-                "format_id": chosen.format_id if chosen else None,
+                "format_id": format_spec,
             }
         )
 
