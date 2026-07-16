@@ -9,7 +9,9 @@ See ``README.md`` for installation and usage details.
 
 from __future__ import annotations
 
+import platform
 import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +22,15 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
-from downloader import Downloader, DownloadError, DownloadResult, download_with_retries
+from downloader import (
+    Downloader,
+    DownloadError,
+    DownloadResult,
+    check_ytdlp_latest_version,
+    download_with_retries,
+    get_ytdlp_version,
+    is_update_available,
+)
 from formatter import FormatInfo, FormatTableBuilder
 from progress import ProgressManager
 from utils import (
@@ -28,10 +38,12 @@ from utils import (
     append_log,
     auto_update_ytdlp,
     check_ffmpeg_installed,
+    check_internet_connection,
     format_bytes,
     format_elapsed,
     load_config,
     load_history,
+    open_github_issue,
     parse_index_ranges,
     sanitize_filename,
     save_config,
@@ -62,13 +74,7 @@ class App:
 
     def run(self) -> None:
         """Run the interactive menu until the user chooses to exit."""
-        if not check_ffmpeg_installed():
-            self.console.print(
-                "[yellow]Warning:[/yellow] FFmpeg was not found on your PATH. "
-                "Merging separate video/audio streams, embedding thumbnails and "
-                "embedding metadata will not work until it is installed. "
-                "See README.md for installation instructions."
-            )
+        self._print_startup_diagnostics()
 
         if self.config.get("auto_update_ytdlp"):
             with self.console.status("[dim]Checking for yt-dlp updates...[/dim]"):
@@ -103,12 +109,14 @@ class App:
                 action()
             except DownloadError as exc:
                 self.console.print(f"[red]Error:[/red] {exc}")
+                self._offer_issue_report(str(exc))
             except KeyboardInterrupt:
                 self.console.print("\n[yellow]Operation cancelled by user.[/yellow]")
                 append_log("Operation cancelled by user (KeyboardInterrupt).")
             except Exception as exc:  # noqa: BLE001 - keep the menu alive no matter what
                 self.console.print(f"[red]Unexpected error:[/red] {exc}")
                 append_log(f"UNEXPECTED ERROR: {exc!r}")
+                self._offer_issue_report(f"Unexpected error: {exc}", traceback.format_exc())
 
     def _print_menu(self) -> None:
         self.console.rule("[bold magenta]YT Format Downloader[/bold magenta]")
@@ -121,6 +129,49 @@ class App:
             "[bold]6.[/bold] Download History\n"
             "[bold]7.[/bold] Exit"
         )
+
+    def _print_startup_diagnostics(self) -> None:
+        """Check FFmpeg, internet connectivity and the yt-dlp version once at
+        startup, and print a small status table so problems are obvious
+        before the user tries (and fails) an actual download."""
+        ffmpeg_ok = check_ffmpeg_installed()
+        installed_version = get_ytdlp_version()
+        with self.console.status("[dim]Checking internet connection...[/dim]"):
+            internet_ok = check_internet_connection()
+
+        table = Table(title="System Check", show_header=False, box=None, padding=(0, 2))
+        table.add_column("Check", style="bold")
+        table.add_column("Status")
+        table.add_row("FFmpeg", "[green]Found[/green]" if ffmpeg_ok else "[red]Not found[/red]")
+        table.add_row(
+            "Internet connection",
+            "[green]Connected[/green]" if internet_ok else "[red]Not connected[/red]",
+        )
+        table.add_row("yt-dlp version", f"[cyan]{installed_version}[/cyan]")
+        self.console.print(table)
+
+        if not ffmpeg_ok:
+            self.console.print(
+                "[yellow]Warning:[/yellow] FFmpeg was not found on your PATH. "
+                "Merging separate video/audio streams, embedding thumbnails and "
+                "embedding metadata will not work until it is installed. "
+                "See README.md for installation instructions."
+            )
+        if not internet_ok:
+            self.console.print(
+                "[yellow]Warning:[/yellow] No internet connection detected. "
+                "Fetching formats and downloading will not work until you're back online."
+            )
+        elif not self.config.get("auto_update_ytdlp"):
+            # Only worth a PyPI round-trip if we know we're online, and only
+            # as a hint - auto_update_ytdlp already handles this proactively.
+            latest_version = check_ytdlp_latest_version()
+            if latest_version and is_update_available(installed_version, latest_version):
+                self.console.print(
+                    f"[yellow]A newer yt-dlp version is available:[/yellow] {latest_version} "
+                    f"(installed: {installed_version}). Update via Settings or run "
+                    "`pip install --upgrade yt-dlp`."
+                )
 
     # ------------------------------------------------------------------
     # Menu option 1: Download Video
@@ -403,6 +454,13 @@ class App:
         return Path(folder).expanduser()
 
     def _safe_extract(self, url: str) -> Optional[Dict[str, Any]]:
+        if not check_internet_connection():
+            self.console.print(
+                "[red]Error:[/red] No internet connection detected. "
+                "Please check your network and try again."
+            )
+            append_log(f"EXTRACT SKIPPED (no internet) {url}")
+            return None
         try:
             with self.console.status("[bold cyan]Fetching video information..."):
                 info = self.downloader.extract_info(url)
@@ -410,6 +468,7 @@ class App:
         except DownloadError as exc:
             self.console.print(f"[red]Error:[/red] {exc}")
             append_log(f"EXTRACT FAILED {url}: {exc}")
+            self._offer_issue_report(str(exc), f"URL: {url}")
             return None
 
     @staticmethod
@@ -529,6 +588,7 @@ class App:
                     border_style="red",
                 )
             )
+            self._offer_issue_report(result.error_message or "Download failed", f"URL: {result.url}")
             return
         body = (
             f"[bold]Title:[/bold] {result.title}\n"
@@ -557,6 +617,48 @@ class App:
                 "format_id": chosen.format_id if chosen else None,
             }
         )
+
+    # ------------------------------------------------------------------
+    # GitHub issue reporting
+    # ------------------------------------------------------------------
+
+    def _offer_issue_report(self, summary: str, detail: str = "") -> None:
+        """After an error is shown, let the user optionally file a GitHub
+        issue about it (with basic environment info pre-filled) instead of
+        just leaving them with an error message and nothing to do about it.
+        """
+        try:
+            wants_to_report = Confirm.ask(
+                "Would you like to raise an issue on GitHub about this?", default=False
+            )
+        except KeyboardInterrupt:
+            return
+        if not wants_to_report:
+            return
+
+        body = self._build_issue_body(summary, detail)
+        opened, url = open_github_issue(summary, body)
+        if opened:
+            self.console.print("[cyan]Opening your browser to file a GitHub issue...[/cyan]")
+        self.console.print(f"[dim]If nothing opened, paste this link into your browser:[/dim]\n{url}")
+        append_log(f"Issue report offered for: {summary}")
+
+    @staticmethod
+    def _build_issue_body(summary: str, detail: str) -> str:
+        lines = [
+            summary,
+            "",
+            "### Details",
+            detail or "(no additional details)",
+            "",
+            "### Environment",
+            f"- OS: {platform.system()} {platform.release()}",
+            f"- Python: {platform.python_version()}",
+            f"- yt-dlp: {get_ytdlp_version()}",
+            "",
+            "_Reported via YT Format Downloader's built-in error reporter._",
+        ]
+        return "\n".join(lines)
 
 
 def main() -> None:

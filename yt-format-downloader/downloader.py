@@ -61,6 +61,53 @@ class DownloadResult:
     url: str = ""
 
 
+def get_ytdlp_version() -> str:
+    """Return the installed yt-dlp version string (e.g. ``2024.12.13``)."""
+    return getattr(yt_dlp.version, "__version__", "unknown")
+
+
+def check_ytdlp_latest_version(timeout: float = 3.0) -> Optional[str]:
+    """Best-effort lookup of the latest yt-dlp release on PyPI.
+
+    Returns ``None`` on any failure (offline, PyPI unreachable, etc.) so
+    callers can treat this purely as an optional, non-blocking hint.
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("https://pypi.org/pypi/yt-dlp/json", timeout=timeout) as resp:
+            data = json.load(resp)
+        return data.get("info", {}).get("version")
+    except Exception:  # noqa: BLE001 - purely informational, never fatal
+        return None
+
+
+def _normalize_version(version: str) -> tuple:
+    """Turn a version string into a tuple of ints for numeric comparison.
+
+    PyPI normalizes version identifiers (e.g. strips leading zeros), so
+    yt-dlp's own ``2026.07.04`` shows up there as ``2026.7.4``. Comparing
+    the raw strings would treat those as different versions even though
+    they're identical; comparing numeric tuples does not.
+    """
+    parts = []
+    for segment in version.split("."):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def is_update_available(installed: str, latest: str) -> bool:
+    """Return True if ``latest`` is a strictly newer version than ``installed``."""
+    installed_parts = _normalize_version(installed)
+    latest_parts = _normalize_version(latest)
+    length = max(len(installed_parts), len(latest_parts))
+    installed_parts += (0,) * (length - len(installed_parts))
+    latest_parts += (0,) * (length - len(latest_parts))
+    return latest_parts > installed_parts
+
+
 def friendly_error_message(exc: Exception) -> str:
     """Translate a yt-dlp/network exception into a short, friendly message."""
     text = str(exc).lower()

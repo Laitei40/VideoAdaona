@@ -213,6 +213,27 @@ def check_ffmpeg_installed() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def check_internet_connection(timeout: float = 2.5) -> bool:
+    """Return True if the internet appears reachable.
+
+    Tries a plain TCP handshake against a couple of well-known, highly
+    available hosts (DNS resolvers) rather than any single site, so a
+    single outage doesn't produce a false negative. No HTTP request is
+    made - this is only meant to catch "no network" fast, before handing
+    a URL to yt-dlp and waiting on a long timeout.
+    """
+    import socket
+
+    probes = (("1.1.1.1", 443), ("8.8.8.8", 443))
+    for host, port in probes:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def parse_index_ranges(text: str, maximum: int) -> List[int]:
     """Parse a human-friendly selection string like ``1,3,5-7`` into indices.
 
@@ -271,3 +292,41 @@ def auto_update_ytdlp() -> Optional[str]:
         return None
     except Exception as exc:  # noqa: BLE001
         return str(exc)[:300]
+
+
+# ---------------------------------------------------------------------------
+# GitHub issue reporting
+# ---------------------------------------------------------------------------
+
+GITHUB_ISSUES_URL = "https://github.com/Laitei40/VideoAdaona/issues"
+
+# GitHub (and browsers/proxies in front of it) can reject very long URLs, so
+# the prefilled body is capped well under common limits.
+_MAX_ISSUE_BODY_LENGTH = 1800
+
+
+def build_github_issue_url(title: str, body: str) -> str:
+    """Build a prefilled "new issue" URL for the project's GitHub repo."""
+    from urllib.parse import urlencode
+
+    if len(body) > _MAX_ISSUE_BODY_LENGTH:
+        body = body[:_MAX_ISSUE_BODY_LENGTH].rstrip() + "\n\n... (truncated)"
+    query = urlencode({"title": title[:120], "body": body})
+    return f"{GITHUB_ISSUES_URL}/new?{query}"
+
+
+def open_github_issue(title: str, body: str) -> tuple:
+    """Try to open the user's browser to a prefilled GitHub issue.
+
+    Returns ``(opened, url)`` - ``opened`` is a best-effort guess (some
+    platforms/browsers report success even when nothing visibly happened),
+    so callers should always show ``url`` as a fallback the user can copy.
+    """
+    import webbrowser
+
+    url = build_github_issue_url(title, body)
+    try:
+        opened = webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - never let issue reporting itself crash
+        opened = False
+    return opened, url

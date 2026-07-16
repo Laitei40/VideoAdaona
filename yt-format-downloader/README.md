@@ -23,6 +23,15 @@ Works on Windows, Linux and macOS.
 - Friendly, non-crashing error handling for private/age-restricted/geo-blocked
   videos, missing FFmpeg, and network failures, with automatic retries.
 - A plain-text progress log (`download_log.txt`) of everything that happened.
+- Startup system check: FFmpeg availability, internet connectivity, and the
+  installed yt-dlp version (with a hint if a newer release is on PyPI).
+  Internet connectivity is also checked before every URL fetch, so an
+  offline machine fails fast with a clear message instead of hanging.
+- Whenever an error occurs, the app never just stops - it asks if you'd
+  like to open a pre-filled GitHub issue about it
+  ([Laitei40/VideoAdaona/issues](https://github.com/Laitei40/VideoAdaona/issues))
+  with the error and basic environment info included, then returns you to
+  the menu either way.
 
 ## Installation
 
@@ -120,7 +129,3 @@ Each module has a single responsibility, so it's easy to extend:
 - Add a new yt-dlp option in `downloader.py`'s `_build_ydl_opts`.
 - Add a new table column in `formatter.py`.
 - Add a new setting to `DEFAULT_CONFIG` in `utils.py`.
-
-## License
-
-MIT - see [LICENSE](LICENSE).
