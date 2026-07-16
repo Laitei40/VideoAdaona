@@ -120,3 +120,7 @@ Each module has a single responsibility, so it's easy to extend:
 - Add a new yt-dlp option in `downloader.py`'s `_build_ydl_opts`.
 - Add a new table column in `formatter.py`.
 - Add a new setting to `DEFAULT_CONFIG` in `utils.py`.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
