@@ -1,8 +1,9 @@
 # YT Format Downloader
 
-An interactive, terminal-based frontend for [yt-dlp](https://github.com/yt-dlp/yt-dlp),
-styled with [rich](https://github.com/Textualize/rich). Browse every format a
-video offers in a clean table, pick exactly what you want, and watch a live
+**Developed by Laitei** — an interactive, terminal-based frontend for
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), styled with
+[rich](https://github.com/Textualize/rich). Browse every format a video
+offers in a clean table, pick exactly what you want, and watch a live
 progress bar while it downloads and merges automatically.
 
 Works on Windows, Linux and macOS.
@@ -78,12 +79,17 @@ From any directory, in any terminal:
 ytfmt
 ```
 
-You'll see a menu:
+You'll see a startup banner and system check, then the menu:
 
 ```
-==============================
-YT Format Downloader
-==============================
+┌──────────────────────┐
+│ YT Format Downloader │
+│ Developed by Laitei  │
+└──────────────────────┘
+System Check
+  FFmpeg                 Found
+  Internet connection    Connected
+  yt-dlp version         2026.07.04
 
 1. Download Video
 2. Download Best Quality
@@ -95,8 +101,8 @@ YT Format Downloader
 ```
 
 1. **Download Video** - paste a URL, browse its formats, pick one by number,
-   choose a download folder (blank = `Downloads`), confirm the estimated
-   size, and watch it download.
+   choose a download folder (blank = your `Downloads` folder), confirm the
+   estimated size, and watch it download.
 2. **Download Best Quality** - paste one or more comma-separated URLs and
    they'll download in parallel using `bestvideo+bestaudio`.
 3. **Download Audio Only** - same as option 1, but only audio formats are
@@ -122,6 +128,7 @@ yt-format-downloader/
             progress.py           # Rich progress bars wired to yt-dlp progress hooks
             utils.py              # config/history persistence, sanitisation, formatting
     requirements.txt
+    LICENSE
     README.md
 ```
 
@@ -146,7 +153,9 @@ Inside that folder (safe to delete, they'll be recreated):
 Downloads use yt-dlp's native `continuedl` support and `.part` files, so
 re-running a download for the same file will resume where it left off
 rather than starting over. Pressing `Ctrl+C` at any point cancels the
-current operation cleanly and returns you to the menu.
+current operation cleanly and returns you to the menu, and closing the
+input stream entirely (`Ctrl+D`/`Ctrl+Z`, or piped input running out)
+exits the app cleanly instead of crashing.
 
 ## Extending
 
@@ -156,3 +165,7 @@ Each module has a single responsibility, so it's easy to extend:
 - Add a new yt-dlp option in `downloader.py`'s `_build_ydl_opts`.
 - Add a new table column in `formatter.py`.
 - Add a new setting to `DEFAULT_CONFIG` in `utils.py`.
+
+## License
+
+MIT - see [LICENSE](LICENSE). Copyright (c) 2026 Laitei.
