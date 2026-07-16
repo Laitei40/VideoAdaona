@@ -36,11 +36,20 @@ Works on Windows, Linux and macOS.
 ## Installation
 
 1. Install Python 3.9+.
-2. Install the dependencies:
+
+2. Install this project as a command-line tool, from the project root (the
+   folder containing `pyproject.toml`):
 
    ```bash
-   pip install -r requirements.txt
+   pipx install .
    ```
+
+   [pipx](https://pipx.pypa.io/) installs it in its own isolated environment
+   and puts the `ytfmt` command on your `PATH`, so it's available from any
+   directory, in any terminal. Don't have pipx? `pip install --user .` works
+   the same way (just without the isolation). If you're actively developing
+   the code, use `pipx install --editable .` (or `pip install -e .`) instead,
+   so your edits take effect immediately without reinstalling.
 
 3. Install FFmpeg (required to merge separate video/audio streams, embed
    thumbnails, and embed metadata):
@@ -57,10 +66,16 @@ Works on Windows, Linux and macOS.
    on startup if it can't find FFmpeg, and merging/embedding steps will be
    skipped until it's installed.
 
+A plain `pip install -r requirements.txt` (installing just `yt-dlp` and
+`rich`, without the `ytfmt` command) still works too, if you'd rather run it
+straight from a checkout with `python -m yt_format_downloader.main`.
+
 ## Usage
 
+From any directory, in any terminal:
+
 ```bash
-python main.py
+ytfmt
 ```
 
 You'll see a menu:
@@ -98,16 +113,28 @@ Playlists are detected automatically; you'll be asked which items to grab.
 
 ```
 yt-format-downloader/
-    main.py         # interactive menu and orchestration
-    downloader.py   # yt-dlp wrapper, error handling, retries
-    formatter.py    # format extraction + Rich table rendering
-    progress.py     # Rich progress bars wired to yt-dlp progress hooks
-    utils.py        # config/history persistence, sanitisation, formatting
+    pyproject.toml               # packaging + the `ytfmt` console-script entry point
+    src/
+        yt_format_downloader/
+            main.py               # interactive menu and orchestration
+            downloader.py         # yt-dlp wrapper, error handling, retries
+            formatter.py          # format extraction + Rich table rendering
+            progress.py           # Rich progress bars wired to yt-dlp progress hooks
+            utils.py              # config/history persistence, sanitisation, formatting
     requirements.txt
     README.md
 ```
 
-Generated at runtime (safe to delete, they'll be recreated):
+Because the package is installed (e.g. into `site-packages`), its data files
+don't live next to the source - they live in your per-user data directory,
+so they persist across reinstalls/upgrades and any account on the machine
+gets its own:
+
+- **Windows**: `%APPDATA%\yt-format-downloader\`
+- **macOS**: `~/Library/Application Support/yt-format-downloader/`
+- **Linux**: `${XDG_CONFIG_HOME:-~/.config}/yt-format-downloader/`
+
+Inside that folder (safe to delete, they'll be recreated):
 
 - `config.json` - your saved settings
 - `history.json` - recent downloads/searches

@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Runtime data (the app now writes these to a per-user data directory
+# instead, but ignore them here in case anyone runs it from a checkout)
+config.json
+history.json
+download_log.txt
+download_archive.txt

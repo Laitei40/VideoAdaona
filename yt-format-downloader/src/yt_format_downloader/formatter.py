@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from rich.table import Table
 
-from utils import format_bytes
+from .utils import format_bytes
 
 
 @dataclass

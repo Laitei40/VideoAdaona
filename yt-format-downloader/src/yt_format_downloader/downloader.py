@@ -15,8 +15,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import yt_dlp
 
-from formatter import FormatInfo
-from utils import ARCHIVE_PATH, append_log, format_bytes, sanitize_filename
+from .formatter import FormatInfo
+from .utils import ARCHIVE_PATH, append_log, format_bytes, sanitize_filename
 
 ProgressHook = Callable[[Dict[str, Any]], None]
 

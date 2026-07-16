@@ -24,7 +24,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from utils import append_log
+from .utils import append_log
 
 
 def build_progress(console: Optional[Console] = None) -> Progress:

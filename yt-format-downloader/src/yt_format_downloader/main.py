@@ -1,8 +1,9 @@
 """YT Format Downloader - an interactive command-line frontend for yt-dlp.
 
-Run this file directly to launch the application::
+Once installed (``pip install .`` or ``pipx install .`` from the project
+root), run it from anywhere with::
 
-    python main.py
+    ytfmt
 
 See ``README.md`` for installation and usage details.
 """
@@ -21,8 +22,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
+from rich.text import Text
 
-from downloader import (
+from .downloader import (
     Downloader,
     DownloadError,
     DownloadResult,
@@ -31,9 +33,9 @@ from downloader import (
     get_ytdlp_version,
     is_update_available,
 )
-from formatter import FormatInfo, FormatTableBuilder
-from progress import ProgressManager
-from utils import (
+from .formatter import FormatInfo, FormatTableBuilder
+from .progress import ProgressManager
+from .utils import (
     add_history_entry,
     append_log,
     auto_update_ytdlp,
@@ -74,6 +76,7 @@ class App:
 
     def run(self) -> None:
         """Run the interactive menu until the user chooses to exit."""
+        self._print_banner()
         self._print_startup_diagnostics()
 
         if self.config.get("auto_update_ytdlp"):
@@ -93,12 +96,18 @@ class App:
 
         while True:
             self._print_menu()
-            choice = Prompt.ask(
-                "Select an option",
-                choices=list(actions.keys()) + ["7"],
-                default="7",
-                show_choices=False,
-            )
+            try:
+                choice = Prompt.ask(
+                    "Select an option",
+                    choices=list(actions.keys()) + ["7"],
+                    default="7",
+                    show_choices=False,
+                )
+            except EOFError:
+                # stdin closed/exhausted (piped input ran out, Ctrl+D/Ctrl+Z,
+                # etc.) - treat exactly like choosing Exit, not a crash.
+                self.console.print("\n[cyan]Goodbye![/cyan]")
+                break
             if choice == "7":
                 self.console.print("[cyan]Goodbye![/cyan]")
                 break
@@ -113,6 +122,10 @@ class App:
             except KeyboardInterrupt:
                 self.console.print("\n[yellow]Operation cancelled by user.[/yellow]")
                 append_log("Operation cancelled by user (KeyboardInterrupt).")
+            except EOFError:
+                self.console.print("\n[cyan]Goodbye![/cyan]")
+                append_log("Input stream ended (EOF) during an action; exiting.")
+                return
             except Exception as exc:  # noqa: BLE001 - keep the menu alive no matter what
                 self.console.print(f"[red]Unexpected error:[/red] {exc}")
                 append_log(f"UNEXPECTED ERROR: {exc!r}")
@@ -129,6 +142,14 @@ class App:
             "[bold]6.[/bold] Download History\n"
             "[bold]7.[/bold] Exit"
         )
+
+    def _print_banner(self) -> None:
+        """Print the app's title banner, shown once at startup."""
+        banner = Text(justify="center")
+        banner.append("YT Format Downloader", style="bold magenta")
+        banner.append("\n")
+        banner.append("Developed by Laitei", style="dim italic")
+        self.console.print(Panel(banner, border_style="magenta", expand=False))
 
     def _print_startup_diagnostics(self) -> None:
         """Check FFmpeg, internet connectivity and the yt-dlp version once at
@@ -631,7 +652,7 @@ class App:
             wants_to_report = Confirm.ask(
                 "Would you like to raise an issue on GitHub about this?", default=False
             )
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             return
         if not wants_to_report:
             return

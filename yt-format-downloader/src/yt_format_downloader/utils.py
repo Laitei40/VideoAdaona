@@ -13,6 +13,7 @@ can be imported anywhere without risk of circular imports. It covers:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -20,11 +21,31 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+def _get_app_dir() -> Path:
+    """Return (and create) a per-user directory for this app's data files.
+
+    The app is installed as a package (e.g. into site-packages), which is
+    often read-only and never the right place for user data anyway, so
+    config/history/logs live under the OS's standard per-user data
+    location instead - not next to the source files.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    app_dir = base / "yt-format-downloader"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    return app_dir
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-APP_DIR: Path = Path(__file__).resolve().parent
+APP_DIR: Path = _get_app_dir()
 CONFIG_PATH: Path = APP_DIR / "config.json"
 HISTORY_PATH: Path = APP_DIR / "history.json"
 LOG_PATH: Path = APP_DIR / "download_log.txt"
@@ -36,7 +57,7 @@ MAX_HISTORY_ENTRIES = 200
 # merged with whatever the user already has saved so new keys introduced in
 # later versions of the app are picked up automatically.
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "download_folder": "Downloads",
+    "download_folder": str(Path.home() / "Downloads"),
     "filename_template": "%(title)s.%(ext)s",
     "embed_thumbnail": True,
     "embed_metadata": True,

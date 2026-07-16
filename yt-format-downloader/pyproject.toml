@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yt-format-downloader"
+version = "1.0.0"
+description = "An interactive command-line frontend for yt-dlp with a Rich-powered UI."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Laitei" }]
+dependencies = [
+    "yt-dlp",
+    "rich",
+]
+
+[project.urls]
+Homepage = "https://github.com/Laitei40/VideoAdaona"
+Issues = "https://github.com/Laitei40/VideoAdaona/issues"
+
+[project.scripts]
+ytfmt = "yt_format_downloader.main:main"
+yt-format-downloader = "yt_format_downloader.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
